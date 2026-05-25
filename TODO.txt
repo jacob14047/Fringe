@@ -1,0 +1,6 @@
+- Analizzare gli attacchi (Decoy States) -> Vedere su claude chat vecchie
+- Analisi del Wrapper Controllable
+- Capire il funzionamento di MLFlow
+- Migliorare la scrittura dei vari agent con Cot, json, etc...
+
+MANCA folder data di MLruns
