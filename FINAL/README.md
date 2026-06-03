@@ -1,0 +1,2 @@
+# Fringe
+Thesis Methodology Implementation
