@@ -1,0 +1,245 @@
+% ============================================================================
+% SEZIONE: System Design
+% Progetto: FRINGE -- Framework multi-agente per penetration testing BB84
+% ============================================================================
+
+\chapter{System Design}
+\label{ch:system-design}
+
+Il framework \textsc{Fringe} è un sistema autonomo multiagente progettato per condurre penetration testing iterativi su reti quantistiche che implementano il protocollo di distribuzione della chiave quantistica BB84 (\emph{Quantum Key Distribution}, QKD). L'architettura si fonda su tre pilastri concettuali:
+
+\begin{enumerate}
+    \item \textbf{Agenti specializzati potenziati da LLM}: ciascun agente assume un ruolo esplicito nel processo di valutazione della sicurezza, sfruttando la capacità dei modelli linguistici di grandi dimensioni (\emph{Large Language Models}) di ragionare su domini tecnici complessi;
+    
+    \item \textbf{Fusione delle evidenze mediante Dempster-Shafer}: le valutazioni qualitative prodotte dagli agenti vengono combinate in un quadro coerente di credenza sulla vulnerabilità del canale, gestendo esplicitamente l'incertezza intrinseca dei sistemi quantistici;
+    
+    \item \textbf{Apprendimento bayesiano incrementale}: lo stato del canale viene tracciato nel tempo mediante prior coniugati, consentendo al sistema di affinare le proprie stime man mano che nuove evidenze si accumulano.
+\end{enumerate}
+
+Il ciclo operativo è chiuso (\emph{closed-loop}): ogni episodio produce conoscenza che informa l'episodio successivo, creando un processo di apprendimento adattivo. La presente sezione descrive l'architettura del sistema, il ruolo di ciascuna componente e i meccanismi matematici di fusione e inferenza.
+
+\section{Architettura Complessiva}
+\label{sec:overall-architecture}
+
+Il framework è strutturato in tre livelli funzionali (Figura~\ref{fig:architecture}):
+
+\begin{enumerate}
+    \item \textbf{Livello di simulazione quantistica}: fornisce un ambiente realistico che emula il protocollo BB84, inclusi modelli fisici del canale (perdita di fotoni, decoerenza, depolarizzazione) e le strategie d'attacco disponibili all'avversaria. Questo livello è controllabile dinamicamente: i parametri dell'avversaria possono essere modificati tra un episodio e l'altro.
+    
+    \item \textbf{Livello degli agenti autonomi}: tre agenti specializzati operano in sequenza, ciascuno potenziato da un LLM. Gli agenti sono progettati secondo il paradigma del \emph{roleplay prompting}, tecnica dimostrata efficace per migliorare la qualità del ragionamento dei modelli linguistici in domini specialistici~\cite{wang2023roleplay}.
+    
+    \item \textbf{Livello di fusione e apprendimento}: integra Dempster-Shafer per la valutazione qualitativa della vulnerabilità e un tracker bayesiano per il monitoraggio quantitativo dello stato del canale.
+\end{enumerate}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[node distance=1.6cm and 2.2cm, >=stealth,
+        agente/.style={rectangle, draw=blue!70!black, fill=blue!6, rounded corners=3pt, minimum width=3.2cm, minimum height=0.9cm, align=center, font=\footnotesize\sffamily\bfseries},
+        modulo/.style={rectangle, draw=green!60!black, fill=green!5, rounded corners=3pt, minimum width=3.2cm, minimum height=0.9cm, align=center, font=\footnotesize\sffamily\bfseries},
+        sim/.style={rectangle, draw=red!70!black, fill=red!5, rounded corners=3pt, minimum width=4.6cm, minimum height=1.0cm, align=center, font=\footnotesize\sffamily\bfseries},
+        labelL/.style={font=\scriptsize\sffamily\itshape, text=gray!80!black}
+      ]
+
+      \node[modulo] (ds) {Dempster--Shafer\\Fusione Evidenze};
+      \node[modulo, right=of ds] (bayes) {Tracker Bayesiano\\Stato Canale};
+
+      \node[agente, below=of ds] (recon) {\textbf{Recon} Agent};
+      \node[agente, right=of recon] (plan) {\textbf{Planning} Agent};
+      \node[agente, right=of plan] (exec) {\textbf{Execution} Agent};
+
+      \node[sim, below={2.0cm} of $(plan)!0.5!(exec)$] (bb84) {Simulatore BB84\\(Controllable Channel)};
+
+      \draw[->, thick, blue!70!black] (recon.north) -- ($(recon.north)+(0,0.5)$) -| (ds.south);
+      \draw[->, thick, green!60!black] (exec.west) -- ($(exec.west)+(-1.2,0)$) |- (ds.east|-exec.west);
+      \draw[->, thick, blue!70!black] (ds.south) -- (plan.north);
+
+      \draw[->, thick, red!60!black] (recon) -- node[labelL{right:metriche canale}]{} (bb84.west|-recon.south);
+      \draw[->, thick, red!60!black] (plan) -- node[labelL{left:parametri attacco}]{} (bb84.north);
+      \draw[->, thick, red!60!black] (exec.east) -- node[labelL{right:esito attacco}]{} (bb84.east|-exec.south);
+
+      \draw[->, dashed, thick, green!60!black] (bayes.west) -- ($(bayes.west)+(-1.2,0)$) |- (recon.north);
+
+      \node[labelL, left={0.4cm} of $(bb84.west)!0.5!(exec.south east)$] {Livello 1:\\Simulazione};
+      \node[labelL, left={0.4cm} of recon] {Livello 2:\\Agenti};
+      \node[labelL, left={0.4cm} of ds] {Livello 3:\\Fusione};
+
+    \end{tikzpicture}
+    \caption{Architettura del framework \textsc{Fringe}. I tre livelli funzionali: simulazione quantistica (base), agenti autonomi LLM-driven (centrale) e fusione/apprendimento (superiore). Le frecce continue indicano il flusso di controllo; le frecce tratteggiate indicano gli aggiornamenti dello stato bayesiano.}
+    \label{fig:architecture}
+\end{figure}
+
+\section{Simulazione Quantistica BB84}
+\label{sec:bb84-simulation}
+
+Il livello di simulazione emula il protocollo BB84 con modelli fisici realistici del canale quantistico. Gli stati dei qubit sono rappresentati mediante vettori di Bloch, consentendo una modellazione accurata della preparazione, trasmissione e misurazione dei fotoni secondo le regole della meccanica quantistica.
+
+\subsection{Modelli di rumore}
+Il canale integra tre meccanismi di degradazione dello stato quantistico: depolarizzazione (errori di Pauli casuali), smorzamento d'ampiezza (perdita di fotoni nella fibra ottica) e smorzamento di fase (decoerenza). Questi modelli sono coerenti con il comportamento osservato nei sistemi QKD reali.
+
+\subsection{Modelli di attacco}
+Il simulatore supporta due strategie d'attacco: l'\emph{intercept-resend}, in cui l'avversaria misura e rispedisce i fotoni introducendo errori rilevabili, e il \emph{Photon Number Splitting} (PNS), che sfrutta le imperfezioni delle sorgenti a debole coerenza per acquisire informazioni in modo furtivo. La soglia di rilevamento è allineata al limite di sicurezza Shor-Preskill per BB84.
+
+\section{Agenti Autonomi LLM-Driven}
+\label{sec:agents}
+
+Il cuore del framework risiede nei tre agenti autonomi, ciascuno potenziato da un modello linguistico di grandi dimensioni. La progettazione degli agenti si fonda su due paradigmi consolidati nella letteratura sui sistemi LLM: il \emph{roleplay prompting} e la \emph{Chain of Thought} (CoT).
+
+\subsection*{Roleplay Prompting}
+La tecnica del roleplay consiste nell'assegnare al modello linguistico un ruolo esplicito all'interno di un contesto specialistico. Wang~\etal~\cite{wang2023roleplay} dimostrano che l'adozione di una \emph{persona} strutturata migliora significativamente la qualità delle risposte in domini tecnici, poiché il modello attiva conoscenze latenti specifiche del ruolo assegnato. Nel nostro framework, ciascun agente assume un ruolo ben definito: analista di sicurezza quantistica, pianificatore strategico ed esecutore tattico.
+
+\subsection*{Chain of Thought}
+La Chain of Thought~\cite{wei2022cot} è una tecnica che induce il modello a scomporre un compito complesso in una sequenza di ragionamenti intermedi. Questo approccio è particolarmente efficace quando il task richiede valutazione multi-criterio, stima probabilistica o pianificazione strategica---tutte operazioni centrali nel penetration testing quantistico. La struttura a tre agenti implementa implicitamente una CoT architetturale: il problema globale (valutare la vulnerabilità del canale) viene scomposto in sotto-task sequenziali (ricognizione $\rightarrow$ pianificazione $\rightarrow$ esecuzione), ciascuno gestito da un agente specializzato.
+
+\subsection{Agente di Ricognizione}
+\label{subsec:recon-agent}
+
+L'agente di ricognizione assume il ruolo di \emph{analista di sicurezza del canale quantistico}. La sua funzione è valutare lo stato basale del canale prima dell'inizio di qualsiasi attacco.
+
+Nello specifico, l'agente:
+\begin{itemize}
+    \item Legge i parametri operativi del canale (QBER basale, lunghezza della chiave setacciata, indicatori di purezza degli stati);
+    
+    \item Stima i parametri fisici sottostanti (probabilità di depolarizzazione, coefficiente di smorzamento, livello di rumore di fondo) mediante ragionamento inverso sui dati osservati;
+    
+    \item Calcola punteggi di anomalia che quantificano la deviazione delle metriche correnti rispetto al comportamento atteso del canale;
+    
+    \item Produce una valutazione della minaccia (\emph{threat assessment}) con stima della presenza dell'avversaria e ipotesi sul tipo di attacco in corso;
+    
+    \item Genera un'assegnazione di probabilità elementare (\emph{Basic Probability Assignment}, BPA) che esprime il grado di supporto all'ipotesi che il canale sia vulnerabile.
+\end{itemize}
+
+L'agente produce inoltre un insieme di ipotesi operative---ciascuna descrivendo una strategia d'attacco candidata con i relativi parametri consigliati e una stima della confidenza. Queste ipotesi costituiscono l'input per la fase di pianificazione.
+
+\subsection{Agente di Pianificazione}
+\label{subsec:planning-agent}
+
+L'agente di pianificazione assume il ruolo di \emph{pianificatore strategico degli attacchi}. Riceve le ipotesi operative dal Recon Agent e gli indici di credenza e plausibilità calcolati dal modulo Dempster-Shafer.
+
+Il suo compito è selezionare la strategia ottimale mediante un processo decisionale multi-criterio che bilancia:
+\begin{itemize}
+    \item l'efficacia attesa dell'attacco;
+    \item il grado di furtività (probabilità di non essere rilevati);
+    \item l'adattamento alle condizioni correnti del canale;
+    \item la confidenza associata all'ipotesi selezionata.
+\end{itemize}
+
+L'output è un piano d'attacco strutturato che specifica i parametri operativi (tasso di intercettazione, attivazione del PNS, modalità adattativa) e suggerimenti per l'agente di esecuzione. Il processo decisionale sfrutta la CoT: il modello valuta ciascuna ipotesi separatamente prima di produrre una raccomandazione aggregata.
+
+\subsection{Agente di Esecuzione}
+\label{subsec:execution-agent}
+
+L'agente di esecuzione assume il ruolo di \emph{esecutore tattico con capacità di auto-riflessione}. Opera in quattro fasi:
+
+\begin{enumerate}
+    \item \textbf{Ottimizzazione dei parametri}: i parametri del piano vengono raffinati in base alle condizioni correnti del canale;
+    
+    \item \textbf{Esecuzione dell'attacco}: il piano ottimizzato viene applicato al canale quantistico e ne viene monitorata l'esecuzione;
+    
+    \item \textbf{Auto-riflessione} (\emph{self-reflection}): post-attacco, l'agente valuta i risultati identificando cause di successo o fallimento, estraendo lezioni apprese e proponendo adattamenti per gli episodi successivi. Questa fase è cruciale per il ciclo di apprendimento del sistema;
+    
+    \item \textbf{Generazione della BPA}: l'agente produce una nuova assegnazione di probabilità elementare basata sull'esito dell'attacco (rilevato o non rilevato), che viene fusa nel modulo Dempster-Shafer.
+\end{enumerate}
+
+La capacità di auto-riflessione distingue questo agente da un semplice esecutore: il feedback generato informa implicitamente le strategie degli episodi futuri, creando un meccanismo di apprendimento per rinforzo implicito.
+
+\section{Modulo Dempster-Shafer}
+\label{sec:dempster-shafer}
+
+Il modulo di fusione delle evidenze implementa la teoria di Dempster-Shafer~\cite{shafer1976mathematical,dempster1968upper}, un formalismo matematico per il ragionamento sotto incertezza che generalizza la teoria della probabilità di Bayes consentendo di rappresentare esplicitamente l'ignoranza.
+
+\subsection{Frame of discernment}
+Il frame è definito come:
+\[
+    \Theta = \{\text{Vulnerabile},\ \text{Non Vulnerabile}\}.
+\]
+Ogni agente produce una Basic Probability Assignment $m: 2^\Theta \to [0,1]$ tale che $\sum_{A \subseteq \Theta} m(A) = 1$ e $m(\varnothing) = 0$. A differenza della probabilità classica, la massa può essere assegnata a sottoinsiemi propri di $\Theta$, rappresentando incertezza non risolta.
+
+\subsection{Regola di combinazione di Dempster}
+Siano $m_1$ e $m_2$ due funzioni di massa provenienti da fonti indipendenti (ad esempio, Recon Agent ed Execution Agent). La regola di combinazione ortogonale produce:
+\[
+    m(A) = \frac{1}{1 - K} \sum_{B \cap C = A} m_1(B) \cdot m_2(C),
+\]
+dove $K = \sum_{B \cap C = \varnothing} m_1(B) \cdot m_2(C)$ è il fattore di conflitto. Lo stato iniziale corrisponde a ignoranza completa: $m(\Theta) = 1$.
+
+\subsection{Credenza e plausibilità}
+Per ogni ipotesi $H \subseteq \Theta$:
+\[
+    \mathrm{Bel}(H) = \sum_{A \subseteq H} m(A), \qquad
+    \mathrm{Pl}(H) = \sum_{A \cap H \neq \varnothing} m(A).
+\]
+L'intervallo $[\mathrm{Bel}(H), \mathrm{Pl}(H)]$ quantifica il grado di supporto all'ipotesi. L'ampiezza $\mathrm{Pl}(H) - \mathrm{Bel}(H)$ riflette l'incertezza residua: man mano che le evidenze si accumulano, l'intervallo tende a restringersi, segnalando convergenza del giudizio sulla vulnerabilità del canale.
+
+\section{Modulo Bayesiano di Aggiornamento}
+\label{sec:bayesian-tracker}
+
+Il \emph{Channel State Tracker} implementa un sistema di inferenza bayesiana incrementale per il monitoraggio dello stato del canale quantistico lungo la campagna di testing.
+
+\subsection{Inferenza sui parametri del canale}
+I parametri chiave del canale sono tracciati mediante distribuzioni prior coniugate:
+\begin{itemize}
+    \item Il QBER è modellato con una distribuzione Beta, prior coniugata naturale per dati bernoulliani (errori su prove totali);
+    
+    \item I parametri continui (purezza degli stati, coefficiente di depolarizzazione, tassi di smorzamento) sono tracciati mediante prior normali con varianza nota.
+\end{itemize}
+
+Ad ogni episodio, le osservazioni aggiornano le distribuzioni posteriori secondo il teorema di Bayes. Le posterior dell'episodio $t$ diventano i prior informati per l'episodio $t+1$, creando un processo di apprendimento sequenziale.
+
+\subsection{Baseline dinamico e registro delle strategie}
+Il tracker mantiene una finestra mobile degli episodi recenti per calcolare un baseline adattivo di anomalia, consentendo il rilevamento di deviazioni significative dal comportamento atteso del canale. Inoltre, registra l'efficacia storica di ciascuna strategia d'attacco in condizioni simili, abilitando raccomandazioni basate sull'esperienza accumulata durante la campagna.
+
+\section{Ciclo Operativo}
+\label{sec:operational-cycle}
+
+Ogni episodio segue la sequenza operativa illustrata nell'Algoritmo~\ref{alg:episode}:
+
+\begin{algorithm}[htbp]
+    \caption{Ciclo operativo di un episodio nel framework \textsc{Fringe}}
+    \label{alg:episode}
+    \begin{algorithmic}[1]
+        \STATE Canale in condizione basale (avversaria disabilitata)
+        \STATE Esegui iterazione $\to$ raccogli metriche del canale
+        \STATE \textbf{Recon Agent}: analizza le metriche, genera BPA e ipotesi operative
+        \STATE \textbf{Dempster-Shafer}: fonde la BPA di ricognizione $\to$ aggiorna credenza e plausibilità
+        \STATE \textbf{Planning Agent}: seleziona strategia ottimale dalle ipotesi disponibili
+        \STATE Applica i parametri dell'attacco al canale
+        \STATE Esegui iterazione sotto attacco $\to$ raccogli esito (QBER, rilevamento)
+        \STATE \textbf{Execution Agent}: auto-riflessione e generazione BPA di esecuzione
+        \STATE \textbf{Dempster-Shafer}: fonde la BPA di esecuzione $\to$ aggiorna credenza e plausibilità
+        \STATE Aggiorna tracker bayesiano con i dati dell'episodio
+    \end{algorithmic}
+\end{algorithm}
+
+Il ciclo si ripete per un numero prestabilito di episodi, consentendo al sistema di esplorare lo spazio dei parametri d'attacco e di affinare progressivamente la stima della vulnerabilità del canale. L'intera campagna è tracciata mediante un sistema di logging sperimentale che registra parametri, metriche e artefatti per ciascun episodio, garantendo riproducibilità e facilitando l'analisi post-campagna.
+
+% ============================================================================
+% BIBLIOGRAFIA (da integrare nel file .bib principale)
+% ============================================================================
+% @inproceedings{wang2023roleplay,
+%   author    = {Wang, Yuntian and others},
+%   title     = {Role-Play! ChatGPT with Configurable Personality as a Platform Agent},
+%   booktitle = {arXiv preprint arXiv:2310.00746},
+%   year      = {2023}
+% }
+% @article{wei2022cot,
+%   author    = {Wei, Jason and Wang, Xuezhi and Schuurmans, Dale and others},
+%   title     = {Chain-of-Thought Prompting Elicits Reasoning in Large Language Models},
+%   journal   = {Advances in Neural Information Processing Systems},
+%   volume    = {35},
+%   pages     = {24824--24837},
+%   year      = {2022}
+% }
+% @book{shafer1976mathematical,
+%   author    = {Shafer, Glenn},
+%   title     = {A Mathematical Theory of Evidence},
+%   publisher = {Princeton University Press},
+%   year      = {1976}
+% }
+% @article{dempster1968upper,
+%   author    = {Dempster, Arthur P.},
+%   title     = {Upper and Lower Probabilities Induced by a Multivalued Mapping},
+%   journal   = {Annals of Mathematical Statistics},
+%   volume    = {38},
+%   number    = {2},
+%   pages     = {325--339},
+%   year      = {1968}
+% }
