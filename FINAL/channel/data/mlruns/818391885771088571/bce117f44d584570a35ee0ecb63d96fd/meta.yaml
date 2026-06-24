@@ -1,0 +1,14 @@
+artifact_uri: file:C:/Users/sesal/Desktop/Tullo_Thesis/channel/data/mlruns/818391885771088571/bce117f44d584570a35ee0ecb63d96fd/artifacts
+end_time: 1779702546397
+entry_point_name: ''
+experiment_id: '818391885771088571'
+lifecycle_stage: active
+run_id: bce117f44d584570a35ee0ecb63d96fd
+run_name: eve_0.0
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1779702546370
+status: 3
+tags: []
+user_id: sesal
